@@ -16,6 +16,7 @@ namespace VideoManager2_WinUI
         public event PropertyChangedEventHandler? PropertyChanged;
         private void OnPropertyChanged([CallerMemberName] string? propertyName = null)
         {
+            // UIスレッドでプロパティ変更通知をディスパッチする
             if (_dispatcherQueue.HasThreadAccess)
             {
                 PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
@@ -29,6 +30,8 @@ namespace VideoManager2_WinUI
         public int Id { get; set; }
         public string FilePath { get; }
         public string FileName { get; }
+        // ★ アイテムがフォルダかどうかを示すプロパティを追加
+        public bool IsFolder { get; }
         public ulong FileSize { get; }
         public DateTimeOffset DateModified { get; }
         public TimeSpan Duration { get; }
@@ -47,10 +50,12 @@ namespace VideoManager2_WinUI
 
         private readonly DispatcherQueue _dispatcherQueue;
 
-        public VideoItem(string filePath, string fileName, ulong fileSize, DateTimeOffset dateModified, TimeSpan duration)
+        // ★ コンストラクタに isFolder を追加
+        public VideoItem(string filePath, string fileName, bool isFolder, ulong fileSize, DateTimeOffset dateModified, TimeSpan duration)
         {
             FilePath = filePath;
             FileName = fileName;
+            IsFolder = isFolder; // ★ 追加
             FileSize = fileSize;
             DateModified = dateModified;
             Duration = duration;
@@ -60,7 +65,11 @@ namespace VideoManager2_WinUI
 
         public async Task LoadDetailsAsync()
         {
-            await LoadThumbnailAsync();
+            // ★ フォルダの場合はサムネイルを読み込まないようにする
+            if (!IsFolder)
+            {
+                await LoadThumbnailAsync();
+            }
         }
 
         private async Task LoadThumbnailAsync()
