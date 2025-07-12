@@ -1,3 +1,4 @@
+/* MainViewModel.cs */
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
@@ -26,6 +27,9 @@ namespace VideoManager2_WinUI
         private readonly SettingsService _settingsService;
 
         public ObservableCollection<VideoItem> VideoItems { get; } = new ObservableCollection<VideoItem>();
+
+        // コマンド名をより実態に合わせた名前に変更することも検討できますが、
+        // 今回はロジックの修正に留めます。
         public ICommand SelectFolderCommand { get; }
 
         private IntPtr _hWnd;
@@ -34,13 +38,14 @@ namespace VideoManager2_WinUI
         {
             _databaseService = new DatabaseService();
             _settingsService = new SettingsService();
-            SelectFolderCommand = new AsyncRelayCommand(SelectNewLibraryAsync);
+            // メソッド名を変更していませんが、実質的な動作は「フォルダをライブラリに追加」になります。
+            SelectFolderCommand = new AsyncRelayCommand(SelectAndAddFolderAsync);
         }
-        
+
         public async void Initialize(object window)
         {
             _hWnd = WindowNative.GetWindowHandle(window);
-            
+
             var localFolder = ApplicationData.Current.LocalFolder.Path;
             var dbPath = Path.Combine(localFolder, "library.db");
             await _databaseService.ConnectAsync(dbPath);
@@ -51,6 +56,7 @@ namespace VideoManager2_WinUI
         private async Task LoadLastLibraryAsync()
         {
             var lastSourcePath = _settingsService.LastLibrarySourceFolderPath;
+            // lastSourcePathの有無で、一度でもライブラリが作成されたかを判断します。
             if (!string.IsNullOrEmpty(lastSourcePath))
             {
                 System.Diagnostics.Debug.WriteLine("Validating library...");
@@ -58,11 +64,12 @@ namespace VideoManager2_WinUI
                 System.Diagnostics.Debug.WriteLine("Validation complete.");
 
                 await LoadLibraryFromDbAsync();
-                System.Diagnostics.Debug.WriteLine($"Loaded last library from source: {lastSourcePath}");
+                System.Diagnostics.Debug.WriteLine($"Loaded last library. Primary source: {lastSourcePath}");
             }
         }
 
-        private async Task SelectNewLibraryAsync()
+        // メソッド名を SelectNewLibraryAsync から SelectAndAddFolderAsync に変更しました。
+        private async Task SelectAndAddFolderAsync()
         {
             var folderPicker = new FolderPicker
             {
@@ -74,10 +81,12 @@ namespace VideoManager2_WinUI
             StorageFolder? folder = await folderPicker.PickSingleFolderAsync();
             if (folder != null)
             {
-                await _databaseService.ClearLibraryDataAsync();
-                
+                // ★ 修正点: データベースをクリアする処理を削除
+                // これにより、既存のライブラリにアイテムが追加されるようになります。
+                // await _databaseService.ClearLibraryDataAsync();
+
                 var itemsToSave = new List<VideoItem>();
-                
+
                 // 1. 直下のサブフォルダをスキャンしてリストに追加
                 var subFolders = await folder.GetFoldersAsync();
                 foreach (var subFolder in subFolders)
@@ -87,17 +96,16 @@ namespace VideoManager2_WinUI
                         subFolder.Path,
                         subFolder.Name,
                         isFolder: true,
-                        fileSize: 0, // フォルダのサイズは0として扱う
+                        fileSize: 0,
                         basicProperties.DateModified,
                         duration: TimeSpan.Zero
                     );
                     itemsToSave.Add(folderItem);
                 }
 
-                // ★★★ 修正点 ★★★
-                // 2. 直下の動画ファイルをスキャンしてリストに追加する処理を復活させました。
+                // 2. 直下の動画ファイルをスキャンしてリストに追加
                 var videoExtensions = new[] { ".mp4", ".wmv", ".mov", ".mkv", ".avi" };
-                var files = await folder.GetFilesAsync(); // CommonFileQueryは使用せず、直下のファイルのみ取得
+                var files = await folder.GetFilesAsync();
                 foreach (var file in files)
                 {
                     if (videoExtensions.Contains(Path.GetExtension(file.Name).ToLowerInvariant()))
@@ -107,7 +115,7 @@ namespace VideoManager2_WinUI
                         var videoItem = new VideoItem(
                             file.Path,
                             file.DisplayName,
-                            isFolder: false, // ファイルなのでfalse
+                            isFolder: false,
                             basicProperties.Size,
                             basicProperties.DateModified,
                             videoProperties.Duration
@@ -118,23 +126,32 @@ namespace VideoManager2_WinUI
 
                 if (itemsToSave.Any())
                 {
+                    // DatabaseService側のINSERT OR IGNOREにより、重複するアイテムは追加されません。
                     await _databaseService.AddOrUpdateFilesAsync(itemsToSave);
                 }
-                
+
+                // DBから再読み込みしてUIを更新します。
                 await LoadLibraryFromDbAsync();
 
-                _settingsService.LastLibrarySourceFolderPath = folder.Path;
+                // ★ 修正点: 最初にライブラリを作成したときのみ、ソースフォルダのパスを保存する
+                // これにより、2つ目以降のフォルダを追加しても、この設定が上書きされるのを防ぎます。
+                if (string.IsNullOrEmpty(_settingsService.LastLibrarySourceFolderPath))
+                {
+                    _settingsService.LastLibrarySourceFolderPath = folder.Path;
+                    System.Diagnostics.Debug.WriteLine($"Primary library source folder set to: {folder.Path}");
+                }
             }
         }
 
         private async Task LoadLibraryFromDbAsync()
         {
             var itemsFromDb = await _databaseService.GetFilesAsync();
-            
+
             VideoItems.Clear();
             foreach (var item in itemsFromDb)
             {
                 VideoItems.Add(item);
+                // サムネイルなどの詳細情報は非同期で読み込みます。
                 _ = item.LoadDetailsAsync();
             }
             System.Diagnostics.Debug.WriteLine($"{itemsFromDb.Count} items loaded from DB.");
