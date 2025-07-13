@@ -1,13 +1,13 @@
-/* MainViewModel.cs */
+using CommunityToolkit.Mvvm.ComponentModel;
+using CommunityToolkit.Mvvm.Input;
+using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Controls;
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
-using System.ComponentModel;
 using System.IO;
 using System.Linq;
-using System.Runtime.CompilerServices;
 using System.Threading.Tasks;
-using System.Windows.Input;
 using Windows.Storage;
 using Windows.Storage.FileProperties;
 using Windows.Storage.Pickers;
@@ -15,36 +15,27 @@ using WinRT.Interop;
 
 namespace VideoManager2_WinUI
 {
-    public class MainViewModel : INotifyPropertyChanged
+    public partial class MainViewModel : ObservableObject
     {
-        public event PropertyChangedEventHandler? PropertyChanged;
-        private void OnPropertyChanged([CallerMemberName] string? propertyName = null)
-        {
-            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
-        }
-
         private readonly DatabaseService _databaseService;
         private readonly SettingsService _settingsService;
 
         public ObservableCollection<VideoItem> VideoItems { get; } = new ObservableCollection<VideoItem>();
-
-        // コマンド名をより実態に合わせた名前に変更することも検討できますが、
-        // 今回はロジックの修正に留めます。
-        public ICommand SelectFolderCommand { get; }
+        public ObservableCollection<Tag> Tags { get; } = new ObservableCollection<Tag>();
 
         private IntPtr _hWnd;
+        private XamlRoot? _xamlRoot;
 
         public MainViewModel()
         {
             _databaseService = new DatabaseService();
             _settingsService = new SettingsService();
-            // メソッド名を変更していませんが、実質的な動作は「フォルダをライブラリに追加」になります。
-            SelectFolderCommand = new AsyncRelayCommand(SelectAndAddFolderAsync);
         }
 
-        public async void Initialize(object window)
+        public async void Initialize(Window window)
         {
             _hWnd = WindowNative.GetWindowHandle(window);
+            _xamlRoot = window.Content.XamlRoot;
 
             var localFolder = ApplicationData.Current.LocalFolder.Path;
             var dbPath = Path.Combine(localFolder, "library.db");
@@ -56,105 +47,123 @@ namespace VideoManager2_WinUI
         private async Task LoadLastLibraryAsync()
         {
             var lastSourcePath = _settingsService.LastLibrarySourceFolderPath;
-            // lastSourcePathの有無で、一度でもライブラリが作成されたかを判断します。
             if (!string.IsNullOrEmpty(lastSourcePath))
             {
-                System.Diagnostics.Debug.WriteLine("Validating library...");
                 await _databaseService.ValidateLibraryAsync();
-                System.Diagnostics.Debug.WriteLine("Validation complete.");
-
-                await LoadLibraryFromDbAsync();
-                System.Diagnostics.Debug.WriteLine($"Loaded last library. Primary source: {lastSourcePath}");
+                await LoadLibraryDataAsync();
             }
         }
 
-        // メソッド名を SelectNewLibraryAsync から SelectAndAddFolderAsync に変更しました。
+        [RelayCommand]
         private async Task SelectAndAddFolderAsync()
         {
-            var folderPicker = new FolderPicker
-            {
-                SuggestedStartLocation = PickerLocationId.VideosLibrary
-            };
+            var folderPicker = new FolderPicker { SuggestedStartLocation = PickerLocationId.VideosLibrary };
             folderPicker.FileTypeFilter.Add("*");
             InitializeWithWindow.Initialize(folderPicker, _hWnd);
-
             StorageFolder? folder = await folderPicker.PickSingleFolderAsync();
             if (folder != null)
             {
-                // ★ 修正点: データベースをクリアする処理を削除
-                // これにより、既存のライブラリにアイテムが追加されるようになります。
-                // await _databaseService.ClearLibraryDataAsync();
-
                 var itemsToSave = new List<VideoItem>();
-
-                // 1. 直下のサブフォルダをスキャンしてリストに追加
                 var subFolders = await folder.GetFoldersAsync();
                 foreach (var subFolder in subFolders)
                 {
                     BasicProperties basicProperties = await subFolder.GetBasicPropertiesAsync();
-                    var folderItem = new VideoItem(
-                        subFolder.Path,
-                        subFolder.Name,
-                        isFolder: true,
-                        fileSize: 0,
-                        basicProperties.DateModified,
-                        duration: TimeSpan.Zero
-                    );
-                    itemsToSave.Add(folderItem);
+                    itemsToSave.Add(new VideoItem(subFolder.Path, subFolder.Name, true, basicProperties.Size, basicProperties.DateModified, TimeSpan.Zero));
                 }
-
-                // 2. 直下の動画ファイルをスキャンしてリストに追加
                 var videoExtensions = new[] { ".mp4", ".wmv", ".mov", ".mkv", ".avi" };
                 var files = await folder.GetFilesAsync();
                 foreach (var file in files)
                 {
                     if (videoExtensions.Contains(Path.GetExtension(file.Name).ToLowerInvariant()))
                     {
+                        // ★★★ エラー修正ポイント 1: GetBasicPropertiesAsyncの呼び出しを修正 ★★★
+                        // .Properties を経由せずに、fileオブジェクトから直接呼び出します。
                         BasicProperties basicProperties = await file.GetBasicPropertiesAsync();
                         VideoProperties videoProperties = await file.Properties.GetVideoPropertiesAsync();
-                        var videoItem = new VideoItem(
-                            file.Path,
-                            file.DisplayName,
-                            isFolder: false,
-                            basicProperties.Size,
-                            basicProperties.DateModified,
-                            videoProperties.Duration
-                        );
-                        itemsToSave.Add(videoItem);
+                        itemsToSave.Add(new VideoItem(file.Path, file.DisplayName, false, basicProperties.Size, basicProperties.DateModified, videoProperties.Duration));
                     }
                 }
-
-                if (itemsToSave.Any())
-                {
-                    // DatabaseService側のINSERT OR IGNOREにより、重複するアイテムは追加されません。
-                    await _databaseService.AddOrUpdateFilesAsync(itemsToSave);
-                }
-
-                // DBから再読み込みしてUIを更新します。
-                await LoadLibraryFromDbAsync();
-
-                // ★ 修正点: 最初にライブラリを作成したときのみ、ソースフォルダのパスを保存する
-                // これにより、2つ目以降のフォルダを追加しても、この設定が上書きされるのを防ぎます。
+                if (itemsToSave.Any()) { await _databaseService.AddOrUpdateFilesAsync(itemsToSave); }
+                await LoadLibraryDataAsync();
                 if (string.IsNullOrEmpty(_settingsService.LastLibrarySourceFolderPath))
                 {
                     _settingsService.LastLibrarySourceFolderPath = folder.Path;
-                    System.Diagnostics.Debug.WriteLine($"Primary library source folder set to: {folder.Path}");
                 }
             }
         }
+        
+        [RelayCommand]
+        private async Task AddTag(Tag? parentTag)
+        {
+            if (_xamlRoot == null) return;
+            var dialog = new InputDialog("新しいタグ/グループの名前") { XamlRoot = _xamlRoot };
+            var result = await dialog.ShowAsync();
+            if (result == ContentDialogResult.Primary && !string.IsNullOrWhiteSpace(dialog.InputText))
+            {
+                await _databaseService.AddTagAsync(dialog.InputText, parentTag?.Id);
+                await LoadTagsAsync();
+            }
+        }
 
-        private async Task LoadLibraryFromDbAsync()
+        [RelayCommand]
+        private async Task RenameTag(Tag? tagToRename)
+        {
+            if (tagToRename == null || _xamlRoot == null) return;
+            var dialog = new InputDialog("新しい名前", tagToRename.Name) { XamlRoot = _xamlRoot };
+            var result = await dialog.ShowAsync();
+            if (result == ContentDialogResult.Primary && !string.IsNullOrWhiteSpace(dialog.InputText))
+            {
+                tagToRename.Name = dialog.InputText;
+                await _databaseService.UpdateTagAsync(tagToRename);
+            }
+        }
+
+        [RelayCommand]
+        private async Task DeleteTag(Tag? tagToDelete)
+        {
+            if (tagToDelete == null || _xamlRoot == null) return;
+            var dialog = new ContentDialog
+            {
+                Title = "削除の確認",
+                Content = $"タグ「{tagToDelete.Name}」を削除しますか？\nこの操作は元に戻せません。",
+                PrimaryButtonText = "削除",
+                CloseButtonText = "キャンセル",
+                DefaultButton = ContentDialogButton.Close,
+                XamlRoot = _xamlRoot
+            };
+            var result = await dialog.ShowAsync();
+            if (result == ContentDialogResult.Primary)
+            {
+                await _databaseService.DeleteTagAsync(tagToDelete);
+                await LoadTagsAsync();
+            }
+        }
+
+        private async Task LoadLibraryDataAsync()
+        {
+            await LoadTagsAsync();
+            await LoadFilesAsync();
+        }
+
+        private async Task LoadFilesAsync()
         {
             var itemsFromDb = await _databaseService.GetFilesAsync();
-
             VideoItems.Clear();
             foreach (var item in itemsFromDb)
             {
                 VideoItems.Add(item);
-                // サムネイルなどの詳細情報は非同期で読み込みます。
                 _ = item.LoadDetailsAsync();
             }
-            System.Diagnostics.Debug.WriteLine($"{itemsFromDb.Count} items loaded from DB.");
+        }
+
+        private async Task LoadTagsAsync()
+        {
+            var tagsFromDb = await _databaseService.GetTagsAsync();
+            Tags.Clear();
+            foreach (var tag in tagsFromDb)
+            {
+                Tags.Add(tag);
+            }
         }
     }
 }

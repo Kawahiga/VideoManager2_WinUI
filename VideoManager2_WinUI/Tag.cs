@@ -1,5 +1,3 @@
-using Microsoft.UI;
-using Microsoft.UI.Xaml.Media;
 using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Runtime.CompilerServices;
@@ -28,8 +26,10 @@ namespace VideoManager2_WinUI
             set { _name = value; OnPropertyChanged(); }
         }
 
-        private SolidColorBrush _color = new SolidColorBrush(Colors.Transparent);
-        public SolidColorBrush Color
+        // ★ DBとの親和性を高めるため、Colorの型をstringに変更
+        //    ViewModel側でBrushに変換します。
+        private string? _color;
+        public string? Color
         {
             get => _color;
             set { _color = value; OnPropertyChanged(); }
@@ -38,6 +38,7 @@ namespace VideoManager2_WinUI
         public int? ParentId { get; set; }
         public ObservableCollection<Tag> Children { get; set; } = new ObservableCollection<Tag>();
 
+        // ★ コンストラクタをシンプルに
         public Tag(string name)
         {
             _name = name;

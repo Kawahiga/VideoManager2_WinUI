@@ -1,0 +1,19 @@
+<ContentDialog
+    x:Class="VideoManager2_WinUI.InputDialog"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:local="using:VideoManager2_WinUI"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    mc:Ignorable="d"
+    Title="タイトル"
+    PrimaryButtonText="OK"
+    CloseButtonText="キャンセル"
+    DefaultButton="Primary"
+    PrimaryButtonClick="ContentDialog_PrimaryButtonClick"
+    CloseButtonClick="ContentDialog_CloseButtonClick">
+
+    <Grid>
+        <TextBox x:Name="InputTextBox" TextWrapping="Wrap" AcceptsReturn="False"/>
+    </Grid>
+</ContentDialog>

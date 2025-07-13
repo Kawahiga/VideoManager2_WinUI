@@ -4,7 +4,9 @@ namespace VideoManager2_WinUI
 {
     public partial class App : Application
     {
-        private Window m_window;
+        // ★★★ エラー修正ポイント ★★★
+        // フィールドを Null許容(?) に変更して、コンパイラの警告を解決する
+        private Window? m_window;
 
         public App()
         {
