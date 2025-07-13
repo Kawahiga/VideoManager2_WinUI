@@ -10,6 +10,7 @@ using Windows.Storage.FileProperties;
 using Windows.Storage.Streams;
 
 namespace VideoManager2_WinUI
+
 {
     public class VideoItem : INotifyPropertyChanged
     {
